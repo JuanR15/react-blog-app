@@ -1,106 +1,197 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext.jsx'
 
 export default function IndividualPostPage() {
   const { id } = useParams()
   const [post, setPost] = useState(null)
-  const [user, setUser] = useState(null)
+  const [author, setAuthor] = useState(null)
   const [comments, setComments] = useState([])
-  const [name, setName] = useState('')
-  const [text, setText] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [newComment, setNewComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
 
+  const { isAuthenticated, user } = useAuth()
+
   useEffect(() => {
-    async function load() {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+
+    async function loadData() {
       try {
-        setLoading(true); setError(null)
-        const postRes = await fetch(`https://jsonplaceholder.typicode.com/posts/${id}`)
-        if (!postRes.ok) throw new Error('Failed to load post')
-        const p = await postRes.json()
-        setPost(p)
+        const [postRes, commentsRes] = await Promise.all([
+          fetch(`https://jsonplaceholder.typicode.com/posts/${id}`),
+          fetch(`https://jsonplaceholder.typicode.com/posts/${id}/comments`),
+        ])
 
-        const userRes = await fetch(`https://jsonplaceholder.typicode.com/users/${p.userId}`)
-        if (userRes.ok) setUser(await userRes.json())
+        if (!postRes.ok) {
+          throw new Error('Failed to load post.')
+        }
+        if (!commentsRes.ok) {
+          throw new Error('Failed to load comments.')
+        }
 
-        const comRes = await fetch(`https://jsonplaceholder.typicode.com/posts/${id}/comments`)
-        if (comRes.ok) setComments(await comRes.json())
-      } catch (e) {
-        setError(e.message)
-      } finally {
-        setLoading(false)
+        const postData = await postRes.json()
+        const commentsData = await commentsRes.json()
+
+        const userRes = await fetch(`https://jsonplaceholder.typicode.com/users/${postData.userId}`)
+        if (!userRes.ok) {
+          throw new Error('Failed to load author.')
+        }
+        const userData = await userRes.json()
+
+        if (!cancelled) {
+          setPost(postData)
+          setAuthor(userData)
+          setComments(commentsData)
+          setLoading(false)
+        }
+      } catch (err) {
+        console.error(err)
+        if (!cancelled) {
+          setError('Something went wrong while loading this post.')
+          setLoading(false)
+        }
       }
     }
-    load()
+
+    loadData()
+
+    return () => {
+      cancelled = true
+    }
   }, [id])
 
-  const addComment = async (e) => {
+  const handleAddComment = async (e) => {
     e.preventDefault()
+    if (!isAuthenticated) {
+      setSubmitError('Please log in to leave a comment.')
+      return
+    }
+    const trimmed = newComment.trim()
+    if (!trimmed) {
+      setSubmitError('Please enter a comment before submitting.')
+      return
+    }
+
+    setSubmitting(true)
     setSubmitError(null)
-    const n = name.trim(), t = text.trim()
-    if (!n || !t) { setSubmitError('Please enter both name and comment.'); return }
+
+    const displayName = user.username
+    const emailName = displayName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user'
+
     try {
-      setSubmitting(true)
-      const res = await fetch(`https://jsonplaceholder.typicode.com/posts/${id}/comments`, {
+      const res = await fetch('https://jsonplaceholder.typicode.com/comments', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: n, body: t, email: `${n.replace(/\s+/g,'').toLowerCase()}@example.com`, postId: Number(id) })
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        body: JSON.stringify({
+          name: displayName,
+          body: trimmed,
+          email: `${emailName}@example.com`,
+          postId: Number(id),
+        }),
       })
-      if (!res.ok) throw new Error('Failed to post comment')
-      const created = await res.json()
-      // Update local list immediately
-      setComments(prev => [created, ...prev])
-      setName(''); setText('')
-    } catch (e) {
-      setSubmitError(e.message)
+
+      if (!res.ok) {
+        throw new Error('Failed to submit comment.')
+      }
+
+      const data = await res.json()
+      setComments((prev) => [data, ...prev])
+      setNewComment('')
+    } catch (err) {
+      console.error(err)
+      setSubmitError('There was a problem saving your comment. Please try again.')
     } finally {
       setSubmitting(false)
     }
   }
 
-  if (loading) return <p style={{padding:'1rem'}}>Loading post…</p>
-  if (error) return <p style={{padding:'1rem', color:'crimson'}}>Error: {error}</p>
-  if (!post) return null
+  if (loading) {
+    return (
+      <article className="card">
+        <p>Loading post…</p>
+      </article>
+    )
+  }
+
+  if (error) {
+    return (
+      <article className="card">
+        <p style={{ color: 'salmon' }}>{error}</p>
+      </article>
+    )
+  }
+
+  if (!post) {
+    return null
+  }
 
   return (
     <article className="card">
-      <h2 className="post-title">{post.title}</h2>
-      <p className="post-meta">
-        <strong>Author:</strong> {user ? user.name : 'Loading…'} {user && <> <span className="dot">•</span> <strong>Email:</strong> {user.email}</>}
-      </p>
-      <p className="post-content">{post.body}</p>
+      <header className="actions" style={{ justifyContent: 'space-between' }}>
+        <div>
+          <h2 className="post-title">{post.title}</h2>
+          {author && (
+            <p className="post-meta">
+              By <strong>{author.name}</strong>
+              <span className="dot">•</span>
+              <span>{author.email}</span>
+            </p>
+          )}
+        </div>
+        <p className="post-meta">
+          <Link to="/posts">← Back to posts</Link>
+        </p>
+      </header>
+
+      <section>
+        <p className="post-content">{post.body}</p>
+      </section>
 
       <section className="comments">
         <h3>Comments</h3>
-        <form onSubmit={addComment} className="comment-form">
-          <input
-            type="text"
-            placeholder="Your name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            aria-label="Your name"
-          />
-          <input
-            type="text"
-            placeholder="Add a comment"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            aria-label="Add a comment"
-          />
-          <button type="submit" className="submit-btn" disabled={submitting}>{submitting ? 'Posting…' : 'Submit'}</button>
-        </form>
-        {submitError && <p style={{ color: 'crimson' }}>{submitError}</p>}
+
+        {!isAuthenticated ? (
+          <p style={{ color: 'var(--muted)' }}>
+            Please <Link to="/login">log in</Link> to add a comment.
+          </p>
+        ) : (
+          <form className="comment-form form-stacked" onSubmit={handleAddComment}>
+            <textarea
+              placeholder="Write your comment…"
+              rows="3"
+              aria-label="Comment text"
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+            ></textarea>
+            <button type="submit" className="submit-btn" disabled={submitting}>
+              {submitting ? 'Posting…' : 'Post comment'}
+            </button>
+          </form>
+        )}
+
+        {submitError && (
+          <p style={{ color: 'salmon', marginTop: '6px' }}>
+            {submitError}
+          </p>
+        )}
 
         <div className="existing">
-          <h4>Existing Comments:</h4>
+          <h4>Existing comments</h4>
           {comments.length === 0 ? (
             <p style={{ color: 'var(--muted)' }}>No comments yet. Be the first to comment!</p>
           ) : (
             <ul>
               {comments.map((c) => (
-                <li key={c.id}><strong>{c.name}:</strong> {c.body}</li>
+                <li key={c.id}>
+                  <strong>{c.name}:</strong> {c.body}
+                </li>
               ))}
             </ul>
           )}
